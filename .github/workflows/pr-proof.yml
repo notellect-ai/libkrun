@@ -1,0 +1,41 @@
+# Proof-only workflow for an upstream PR draft. It lives ONLY on the fork's
+# notellect/pr-proof/<name>[-unfixed] branches (one extra commit on top of the
+# PR branch); the PR branch itself never carries it. Upstream runs the same
+# vsock filter in unit_tests.yml / code-quality.yml on pull requests only.
+name: PR proof
+
+on:
+  push:
+    branches: ["notellect/pr-proof/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vsock:
+    name: Vsock (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      - name: Create a fake init
+        if: runner.os != 'Windows'
+        shell: bash
+        run: touch init/init
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Devices Clippy
+        run: cargo clippy --locked -p msb_krun_devices -- -D warnings
+      - name: Vsock tests (new)
+        run: cargo test --locked -p msb_krun_devices --lib reset_
+      - name: Vsock queue and stream regressions
+        timeout-minutes: 5
+        run: cargo test --locked -p msb_krun_devices --lib 'virtio::vsock::'
