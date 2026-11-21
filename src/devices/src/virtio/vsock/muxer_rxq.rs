@@ -142,6 +142,7 @@ pub fn rx_to_pkt(cid: u64, rx: MuxerRx, pkt: &mut VsockPacket) -> bool {
         MuxerRx::Reset {
             local_port,
             peer_port,
+            fwd_cnt,
         } => {
             pkt.set_op(uapi::VSOCK_OP_RST)
                 .set_src_cid(uapi::VSOCK_HOST_CID)
@@ -155,7 +156,9 @@ pub fn rx_to_pkt(cid: u64, rx: MuxerRx, pkt: &mut VsockPacket) -> bool {
                 // included: a zero would leave a socket that still holds
                 // unread data with no send space and no POLLOUT.
                 .set_buf_alloc(defs::CONN_TX_BUF_SIZE as u32)
-                .set_fwd_cnt(0);
+                // The real count, like a credit update: once the guest has
+                // sent more than one window, 0 would leave it no credit.
+                .set_fwd_cnt(fwd_cnt);
         }
         #[cfg(unix)]
         MuxerRx::ConnResponse {
@@ -338,7 +341,8 @@ mod tests {
         for port in 0..MuxerRxQ::SIZE / 2 {
             assert!(queue.push(MuxerRx::Reset {
                 local_port: port as u32,
-                peer_port: 2
+                peer_port: 2,
+                fwd_cnt: 0
             }));
         }
         assert!(queue.is_full());
@@ -474,7 +478,8 @@ mod tests {
             3,
             MuxerRx::Reset {
                 local_port: 5,
-                peer_port: 6
+                peer_port: 6,
+                fwd_cnt: 9 << 20
             },
             &mut packet
         ));
@@ -482,5 +487,6 @@ mod tests {
         assert_eq!((packet.src_port(), packet.dst_port()), (5, 6));
         assert_eq!(packet.len(), 0);
         assert_eq!(packet.buf_alloc(), defs::CONN_TX_BUF_SIZE as u32);
+        assert_eq!(packet.fwd_cnt(), 9 << 20);
     }
 }
