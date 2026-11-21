@@ -288,6 +288,7 @@ impl UnixProxy {
         let rx = MuxerRx::Reset {
             local_port: self.local_port,
             peer_port: self.peer_port,
+            fwd_cnt: self.tx_cnt.0,
         };
 
         push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
@@ -907,5 +908,52 @@ impl Proxy for UnixAcceptorProxy {
 impl AsRawFd for UnixAcceptorProxy {
     fn as_raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nix::sys::socket::{socketpair, AddressFamily, SockFlag, SockType};
+    use vm_memory::GuestAddress;
+
+    use super::*;
+
+    // Like the custom stream proxy, a Unix proxy's reset carries the
+    // connection's forwarded count: once the guest has sent more than one
+    // window, a fwd_cnt of 0 would leave its send credit clamped to zero.
+    #[test]
+    fn reset_carries_the_forwarded_count() {
+        let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
+        let (fd, _peer) = socketpair(
+            AddressFamily::Unix,
+            SockType::Stream,
+            None,
+            SockFlag::empty(),
+        )
+        .unwrap();
+        // The virtqueue is not ready, so the reset is left in the muxer queue.
+        let rxq = Arc::new(Mutex::new(MuxerRxQ::new()));
+        let mut proxy = UnixProxy::new_reverse(
+            1,
+            3,
+            1025,
+            2000,
+            fd,
+            mem,
+            Arc::new(Mutex::new(VirtQueue::new(256))),
+            rxq.clone(),
+        );
+        let sent = (defs::CONN_TX_BUF_SIZE + 1024 * 1024) as u32;
+        proxy.tx_cnt = Wrapping(sent);
+
+        proxy.push_reset();
+        assert!(matches!(
+            rxq.lock().unwrap().pop(),
+            Some(MuxerRx::Reset {
+                local_port: 1025,
+                peer_port: 2000,
+                fwd_cnt,
+            }) if fwd_cnt == sent
+        ));
     }
 }
