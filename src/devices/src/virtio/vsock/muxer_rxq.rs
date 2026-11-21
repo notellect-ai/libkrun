@@ -142,7 +142,7 @@ pub fn rx_to_pkt(cid: u64, rx: MuxerRx, pkt: &mut VsockPacket) -> bool {
         MuxerRx::Reset {
             local_port,
             peer_port,
-            fwd_cnt,
+            fwd_cnt: _,
         } => {
             pkt.set_op(uapi::VSOCK_OP_RST)
                 .set_src_cid(uapi::VSOCK_HOST_CID)
@@ -152,13 +152,8 @@ pub fn rx_to_pkt(cid: u64, rx: MuxerRx, pkt: &mut VsockPacket) -> bool {
                 .set_len(0)
                 .set_type(uapi::VSOCK_TYPE_STREAM)
                 .set_flags(0)
-                // Linux takes the peer's credit from every packet, resets
-                // included: a zero would leave a socket that still holds
-                // unread data with no send space and no POLLOUT.
-                .set_buf_alloc(defs::CONN_TX_BUF_SIZE as u32)
-                // The real count, like a credit update: once the guest has
-                // sent more than one window, 0 would leave it no credit.
-                .set_fwd_cnt(fwd_cnt);
+                .set_buf_alloc(0)
+                .set_fwd_cnt(0);
         }
         #[cfg(unix)]
         MuxerRx::ConnResponse {
